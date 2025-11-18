@@ -16,6 +16,7 @@ export default defineConfig({
         'list-view': 'src/ListView/index.tsx',
         'echo': 'src/Echo/index.tsx',
         'intent-display': 'src/IntentDisplay/index.tsx',
+        'discover-connections': 'src/DiscoverConnections/index.tsx',
       },
       formats: ['es'],
       fileName: (format, name) => `${name}.js`,

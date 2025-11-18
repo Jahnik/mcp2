@@ -659,6 +659,212 @@ export async function startTestServer(options: {
           }
         }
 
+        if (name === 'discover_connections') {
+          // Validate input
+          if (!args?.fullInputText) {
+            return res.json({
+              jsonrpc: '2.0',
+              result: {
+                content: [{ type: 'text', text: 'Invalid input: Input text is required' }],
+                isError: true,
+              },
+              id: id || null,
+            });
+          }
+
+          if (args.fullInputText === '') {
+            return res.json({
+              jsonrpc: '2.0',
+              result: {
+                content: [{ type: 'text', text: 'Invalid input: Input text cannot be empty' }],
+                isError: true,
+              },
+              id: id || null,
+            });
+          }
+
+          if (args.maxConnections !== undefined && (args.maxConnections < 1 || args.maxConnections > 50)) {
+            return res.json({
+              jsonrpc: '2.0',
+              result: {
+                content: [{ type: 'text', text: 'Invalid input: maxConnections must be between 1 and 50' }],
+                isError: true,
+              },
+              id: id || null,
+            });
+          }
+
+          // Exchange for Privy token
+          if (!tokenData) {
+            return res.json({
+              jsonrpc: '2.0',
+              result: {
+                content: [{ type: 'text', text: 'Failed to exchange Privy token' }],
+                isError: true,
+              },
+              id: id || null,
+            });
+          }
+
+          try {
+            // Step 1: Call discover/new
+            const discoverNewResponse = await fetch(`${protocolApiUrl}/discover/new`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${tokenData.privyToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ text: args.fullInputText }),
+              signal: AbortSignal.timeout(5000),
+            });
+
+            if (!discoverNewResponse.ok) {
+              const errorText = await discoverNewResponse.text();
+              return res.json({
+                jsonrpc: '2.0',
+                result: {
+                  content: [{ type: 'text', text: `Failed to discover connections: discover/new returned ${discoverNewResponse.status}` }],
+                  isError: true,
+                },
+                id: id || null,
+              });
+            }
+
+            const discoverNewData = await discoverNewResponse.json();
+            const intents = discoverNewData.intents || [];
+
+            // If no intents, return empty
+            if (intents.length === 0) {
+              return res.json({
+                jsonrpc: '2.0',
+                result: {
+                  content: [{ type: 'text', text: 'No connections found.' }],
+                  structuredContent: {
+                    connections: [],
+                    intentsExtracted: 0,
+                    connectionsFound: 0,
+                  },
+                },
+                id: id || null,
+              });
+            }
+
+            // Step 2: Call discover/filter
+            const intentIds = intents.map((i: any) => i.id);
+            const filterResponse = await fetch(`${protocolApiUrl}/discover/filter`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${tokenData.privyToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                intentIds,
+                excludeDiscovered: true,
+                page: 1,
+                limit: args.maxConnections || 10,
+              }),
+              signal: AbortSignal.timeout(5000),
+            });
+
+            if (!filterResponse.ok) {
+              const errorText = await filterResponse.text();
+              return res.json({
+                jsonrpc: '2.0',
+                result: {
+                  content: [{ type: 'text', text: `Failed to discover connections: discover/filter returned ${filterResponse.status}` }],
+                  isError: true,
+                },
+                id: id || null,
+              });
+            }
+
+            const filterData = await filterResponse.json();
+            const results = filterData.results || [];
+
+            // If no results, return with intents
+            if (results.length === 0) {
+              return res.json({
+                jsonrpc: '2.0',
+                result: {
+                  content: [{ type: 'text', text: 'No connections found.' }],
+                  structuredContent: {
+                    connections: [],
+                    intentsExtracted: intents.length,
+                    connectionsFound: 0,
+                  },
+                },
+                id: id || null,
+              });
+            }
+
+            // Step 3: Call vibecheck for each user
+            const connections: Array<{ user: { id: string; name: string; avatar: string | null }; mutualIntentCount: number; synthesis: string }> = [];
+            for (const result of results) {
+              let synthesis = '';
+              try {
+                const vibecheckResponse = await fetch(`${protocolApiUrl}/synthesis/vibecheck`, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${tokenData.privyToken}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    targetUserId: result.user.id,
+                    intentIds,
+                  }),
+                  signal: AbortSignal.timeout(5000),
+                });
+
+                if (vibecheckResponse.ok) {
+                  const vibecheckData = await vibecheckResponse.json();
+                  synthesis = vibecheckData.synthesis || '';
+                }
+              } catch (error) {
+                // Partial failure tolerance - continue with empty synthesis
+              }
+
+              connections.push({
+                user: {
+                  id: result.user.id,
+                  name: result.user.name,
+                  avatar: result.user.avatar,
+                },
+                mutualIntentCount: result.intents?.length || 0,
+                synthesis,
+              });
+            }
+
+            const summaryText = connections.length === 1
+              ? 'Found 1 potential connection.'
+              : `Found ${connections.length} potential connections.`;
+
+            return res.json({
+              jsonrpc: '2.0',
+              result: {
+                content: [{ type: 'text', text: summaryText }],
+                structuredContent: {
+                  connections,
+                  intentsExtracted: intents.length,
+                  connectionsFound: connections.length,
+                },
+              },
+              id: id || null,
+            });
+          } catch (error: any) {
+            const msg = error.name === 'TimeoutError'
+              ? 'Failed to discover connections: Protocol API timeout'
+              : `Failed to discover connections: ${error.message}`;
+            return res.json({
+              jsonrpc: '2.0',
+              result: {
+                content: [{ type: 'text', text: msg }],
+                isError: true,
+              },
+              id: id || null,
+            });
+          }
+        }
+
         return res.status(500).json({
           jsonrpc: '2.0',
           error: { code: -32603, message: `Unknown tool: ${name}` },

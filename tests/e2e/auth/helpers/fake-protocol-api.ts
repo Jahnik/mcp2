@@ -120,6 +120,31 @@ export function resetRoutes(): void {
     linksProcessed: 0,
     intentsGenerated: 1,
   });
+
+  // Set up default response for /discover/filter
+  setRouteResponse('/discover/filter', {
+    results: [],
+    pagination: {
+      page: 1,
+      limit: 50,
+      hasNext: false,
+      hasPrev: false,
+    },
+    filters: {
+      intentIds: null,
+      userIds: null,
+      indexIds: null,
+      sources: null,
+      excludeDiscovered: true,
+    },
+  });
+
+  // Set up default response for /synthesis/vibecheck
+  setRouteResponse('/synthesis/vibecheck', {
+    synthesis: 'Default synthesis text',
+    targetUserId: 'unknown',
+    contextUserId: 'unknown',
+  });
 }
 
 /**

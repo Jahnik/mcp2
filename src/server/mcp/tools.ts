@@ -11,6 +11,7 @@ import {
 import { z } from 'zod';
 import { getItems, performAction } from '../api/backend.js';
 import { config } from '../config.js';
+import { discoverConnectionsFromText } from './discoverConnections.js';
 
 /**
  * Zod schemas for tool input validation
@@ -33,6 +34,11 @@ const ExtractIntentSchema = z.object({
   rawText: z.string().optional(),
   conversationHistory: z.string().optional(),
   userMemory: z.string().optional(),
+});
+
+const DiscoverConnectionsSchema = z.object({
+  fullInputText: z.string().min(1, 'Input text is required'),
+  maxConnections: z.number().int().min(1).max(50).optional(),
 });
 
 /**
@@ -145,6 +151,34 @@ export function registerTools(server: Server) {
             'openai/toolInvocation/invoked': 'Intents analyzed',
           },
         },
+        {
+          name: 'discover_connections',
+          description: 'Given some text, find potential connections to other Index users and synthesize how they might collaborate.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              fullInputText: {
+                type: 'string',
+                description: 'The text to analyze for finding connections',
+              },
+              maxConnections: {
+                type: 'number',
+                description: 'Maximum number of connections to return (1-50, default 10)',
+              },
+            },
+            required: ['fullInputText'],
+          },
+          annotations: {
+            readOnlyHint: true,
+          },
+          _meta: {
+            'openai/outputTemplate': 'ui://widget/discover-connections.html',
+            'openai/toolInvocation/invoking': 'Finding potential connections...',
+            'openai/toolInvocation/invoked': 'Found potential connections',
+            'openai/widgetAccessible': true,
+            'openai/resultCanProduceWidget': true,
+          },
+        },
       ],
     };
   });
@@ -169,6 +203,9 @@ export function registerTools(server: Server) {
 
       case 'extract_intent':
         return await handleExtractIntent(args, auth);
+
+      case 'discover_connections':
+        return await handleDiscoverConnections(args, auth);
 
       default:
         throw new Error(`Unknown tool: ${name}`);
@@ -490,4 +527,74 @@ async function exchangePrivyToken(oauthToken: string): Promise<string> {
   const data = await response.json() as { privyAccessToken: string };
   console.log(`[exchangePrivyToken] Successfully exchanged token`);
   return data.privyAccessToken;
+}
+
+/**
+ * Handle discover_connections tool call
+ */
+async function handleDiscoverConnections(args: any, auth: any) {
+  // 1. Validate authentication
+  if (!auth || !auth.userId) {
+    return {
+      content: [{ type: 'text', text: 'Authentication required.' }],
+      isError: true,
+      _meta: { 'mcp/www_authenticate': 'Bearer resource_metadata="..."' },
+    };
+  }
+
+  // 2. Validate input
+  const parseResult = DiscoverConnectionsSchema.safeParse(args);
+  if (!parseResult.success) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Invalid input: ${parseResult.error.errors.map(e => e.message).join(', ')}`,
+      }],
+      isError: true,
+    };
+  }
+
+  const { fullInputText, maxConnections } = parseResult.data;
+
+  try {
+    // 3. Call orchestrator
+    const { connections, intents } = await discoverConnectionsFromText({
+      oauthToken: auth.token,
+      fullInputText,
+      maxConnections: maxConnections ?? 10,
+    });
+
+    // 4. Generate summary text
+    const summaryText =
+      connections.length === 0
+        ? 'No connections found.'
+        : connections.length === 1
+          ? 'Found 1 potential connection.'
+          : `Found ${connections.length} potential connections.`;
+
+    // 5. Return structured response for widget
+    return {
+      content: [{
+        type: 'text',
+        text: summaryText,
+      }],
+      structuredContent: {
+        connections,
+        intentsExtracted: intents.length,
+        connectionsFound: connections.length,
+      },
+      _meta: {
+        'openai/toolInvocation/invoked': summaryText,
+      },
+    };
+  } catch (error) {
+    console.error('Error discovering connections:', error);
+    return {
+      content: [{
+        type: 'text',
+        text: `Failed to discover connections: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      }],
+      isError: true,
+    };
+  }
 }
