@@ -69,10 +69,3 @@ export async function performAction(
     body: JSON.stringify({ action }),
   });
 }
-
-/**
- * Example: Get user profile (placeholder - replace with actual Protocol API endpoints)
- */
-export async function getUserProfile(privyUserId: string): Promise<any> {
-  return callBackendAPI(privyUserId, `/users/${privyUserId}`, { method: 'GET' });
-}
