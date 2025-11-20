@@ -41,6 +41,13 @@ function getWidgetMeta(uri: string) {
       'openai/widgetAccessible': true,
       'openai/resultCanProduceWidget': true,
     },
+    'ui://widget/discover-connections.html': {
+      'openai/outputTemplate': 'ui://widget/discover-connections.html',
+      'openai/toolInvocation/invoking': 'Finding potential connections...',
+      'openai/toolInvocation/invoked': 'Found potential connections',
+      'openai/widgetAccessible': true,
+      'openai/resultCanProduceWidget': true,
+    },
   };
 
   return metadataMap[uri] || {};
@@ -84,6 +91,12 @@ export async function registerWidgetResources(server: Server) {
       uri: 'ui://widget/intent-display.html',
       name: 'IntentDisplay Widget',
       description: 'Displays extracted intents with archive/delete actions',
+    },
+    {
+      fileName: 'discover-connections',
+      uri: 'ui://widget/discover-connections.html',
+      name: 'DiscoverConnections Widget',
+      description: 'Displays discovered connections with synthesis summaries',
     },
   ];
 
