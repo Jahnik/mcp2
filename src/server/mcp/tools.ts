@@ -9,7 +9,6 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { getItems, performAction } from '../api/backend.js';
 import { config } from '../config.js';
 import { discoverConnectionsFromText } from './discoverConnections.js';
 import { exchangePrivyToken, callDiscoverNew } from '../protocol/client.js';
@@ -18,19 +17,6 @@ import { WIDGETS } from './widgetConfig.js';
 /**
  * Zod schemas for tool input validation
  */
-const GetItemsSchema = z.object({
-  filter: z.string().optional(),
-});
-
-const PerformActionSchema = z.object({
-  itemId: z.string().min(1, 'Item ID is required'),
-  action: z.string().min(1, 'Action is required'),
-});
-
-const EchoSchema = z.object({
-  text: z.string().min(1, 'Text is required'),
-});
-
 const ExtractIntentSchema = z.object({
   fullInputText: z.string().min(1, 'Input text is required'),
   rawText: z.string().optional(),
@@ -47,78 +33,9 @@ const DiscoverConnectionsSchema = z.object({
  * Register all MCP tools
  */
 export function registerTools(server: Server) {
-  // Tool 1: Get Items (read-only)
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
-        {
-          name: 'get-items',
-          description: 'Use this when the user wants to view items from their account. Returns a list of items that can be displayed in an interactive widget.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              filter: {
-                type: 'string',
-                description: 'Optional filter to apply to the items list',
-              },
-            },
-          },
-          annotations: {
-            readOnlyHint: true,
-          },
-          _meta: {
-            'openai/outputTemplate': WIDGETS['list-view'].toolMeta.outputTemplate,
-            'openai/toolInvocation/invoking': WIDGETS['list-view'].toolMeta.invoking,
-            'openai/toolInvocation/invoked': WIDGETS['list-view'].toolMeta.invoked,
-            'openai/widgetAccessible': WIDGETS['list-view'].toolMeta.widgetAccessible,
-            'openai/resultCanProduceWidget': WIDGETS['list-view'].toolMeta.resultCanProduceWidget,
-          },
-        },
-        {
-          name: 'perform-item-action',
-          description: 'Use this when the user wants to perform an action on a specific item. Requires the item ID.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              itemId: {
-                type: 'string',
-                description: 'The ID of the item to perform the action on',
-              },
-              action: {
-                type: 'string',
-                description: 'The action to perform (e.g., approve, reject, archive)',
-              },
-            },
-            required: ['itemId', 'action'],
-          },
-          annotations: {
-            readOnlyHint: true,
-          },
-        },
-        {
-          name: 'echo',
-          description: 'Use this when the user wants to echo back some text. Simply displays the provided text in a nice widget.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              text: {
-                type: 'string',
-                description: 'The text to echo back to the user',
-              },
-            },
-            required: ['text'],
-          },
-          annotations: {
-            readOnlyHint: true,
-          },
-          _meta: {
-            'openai/outputTemplate': WIDGETS.echo.toolMeta.outputTemplate,
-            'openai/toolInvocation/invoking': WIDGETS.echo.toolMeta.invoking,
-            'openai/toolInvocation/invoked': WIDGETS.echo.toolMeta.invoked,
-            'openai/widgetAccessible': WIDGETS.echo.toolMeta.widgetAccessible,
-            'openai/resultCanProduceWidget': WIDGETS.echo.toolMeta.resultCanProduceWidget,
-          },
-        },
         {
           name: 'extract_intent',
           description: 'Extracts and structures the user\'s goals, needs, or objectives from any conversation to help understand what they\'re trying to accomplish.',
@@ -196,15 +113,6 @@ export function registerTools(server: Server) {
     const auth = (extra as any)?.auth;
 
     switch (name) {
-      case 'get-items':
-        return await handleGetItems(args, auth);
-
-      case 'perform-item-action':
-        return await handlePerformAction(args, auth);
-
-      case 'echo':
-        return await handleEcho(args);
-
       case 'extract_intent':
         return await handleExtractIntent(args, auth);
 
@@ -215,197 +123,6 @@ export function registerTools(server: Server) {
         throw new Error(`Unknown tool: ${name}`);
     }
   });
-}
-
-/**
- * Handle get-items tool call
- */
-async function handleGetItems(args: any, auth: any) {
-  // Validate authentication
-  if (!auth || !auth.userId) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: 'Authentication required to access items.',
-        },
-      ],
-      isError: true,
-      _meta: {
-        'mcp/www_authenticate': 'Bearer resource_metadata="..."',
-      },
-    };
-  }
-
-  // Validate input with Zod
-  const parseResult = GetItemsSchema.safeParse(args);
-  if (!parseResult.success) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Invalid input: ${parseResult.error.errors.map(e => e.message).join(', ')}`,
-        },
-      ],
-      isError: true,
-    };
-  }
-
-  const validatedArgs = parseResult.data;
-
-  try {
-    // Call backend API
-    const items = await getItems(auth.userId, validatedArgs.filter);
-
-    // Transform items for widget
-    const widgetItems = items.map((item: any) => ({
-      id: item.id,
-      title: item.title || item.name,
-      description: item.description || '',
-      actionable: true,
-      metadata: item.metadata || {},
-    }));
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Found ${items.length} items${validatedArgs.filter ? ` matching filter "${validatedArgs.filter}"` : ''}.`,
-        },
-      ],
-      // Data for the widget
-      structuredContent: {
-        items: widgetItems,
-      },
-      // Invocation metadata only (widget metadata is in tool registration)
-      _meta: {
-        'openai/toolInvocation/invoking': 'Loading items...',
-        'openai/toolInvocation/invoked': `Loaded ${items.length} items`,
-      },
-    };
-  } catch (error) {
-    console.error('Error fetching items:', error);
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Failed to fetch items: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        },
-      ],
-      isError: true,
-    };
-  }
-}
-
-/**
- * Handle perform-item-action tool call
- */
-async function handlePerformAction(args: any, auth: any) {
-  // Validate authentication
-  if (!auth || !auth.userId) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: 'Authentication required to perform actions.',
-        },
-      ],
-      isError: true,
-      _meta: {
-        'mcp/www_authenticate': 'Bearer resource_metadata="..."',
-      },
-    };
-  }
-
-  // Validate input with Zod
-  const parseResult = PerformActionSchema.safeParse(args);
-  if (!parseResult.success) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Invalid input: ${parseResult.error.errors.map(e => e.message).join(', ')}`,
-        },
-      ],
-      isError: true,
-    };
-  }
-
-  const validatedArgs = parseResult.data;
-
-  try {
-    // Call backend API
-    const result = await performAction(auth.userId, validatedArgs.itemId, validatedArgs.action);
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Successfully performed "${validatedArgs.action}" on item ${validatedArgs.itemId}.`,
-        },
-      ],
-      structuredContent: {
-        success: true,
-        itemId: validatedArgs.itemId,
-        action: validatedArgs.action,
-        result,
-      },
-      _meta: {
-        timestamp: new Date().toISOString(),
-      },
-    };
-  } catch (error) {
-    console.error('Error performing action:', error);
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Failed to perform action: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        },
-      ],
-      isError: true,
-    };
-  }
-}
-
-/**
- * Handle echo tool call
- * Simple tool that echoes back the provided text
- */
-async function handleEcho(args: any) {
-  // Validate input with Zod
-  const parseResult = EchoSchema.safeParse(args);
-  if (!parseResult.success) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Invalid input: ${parseResult.error.errors.map(e => e.message).join(', ')}`,
-        },
-      ],
-      isError: true,
-    };
-  }
-
-  const validatedArgs = parseResult.data;
-
-  return {
-    content: [
-      {
-        type: 'text',
-        text: `Echo: ${validatedArgs.text}`,
-      },
-    ],
-    // Data for the Echo widget
-    structuredContent: {
-      text: validatedArgs.text,
-    },
-    // Invocation metadata only (widget metadata is in tool registration)
-    _meta: {
-      'openai/toolInvocation/invoking': 'Echoing...',
-      'openai/toolInvocation/invoked': 'Echo complete',
-    },
-  };
 }
 
 /**

@@ -3,7 +3,7 @@
  * Single source of truth for widget metadata shared between tools and resources
  */
 
-export type WidgetKey = 'echo' | 'list-view' | 'intent-display' | 'discover-connections';
+export type WidgetKey = 'intent-display' | 'discover-connections';
 
 export interface WidgetConfig {
   key: WidgetKey;
@@ -25,34 +25,6 @@ export interface WidgetConfig {
 }
 
 export const WIDGETS: Record<WidgetKey, WidgetConfig> = {
-  echo: {
-    key: 'echo',
-    fileName: 'echo',
-    uri: 'ui://widget/echo.html',
-    title: 'Echo Widget',
-    description: 'Simple echo widget that displays text',
-    toolMeta: {
-      outputTemplate: 'ui://widget/echo.html',
-      invoking: 'Echoing...',
-      invoked: 'Echo complete',
-      widgetAccessible: true,
-      resultCanProduceWidget: true,
-    },
-  },
-  'list-view': {
-    key: 'list-view',
-    fileName: 'list-view',
-    uri: 'ui://widget/list-view.html',
-    title: 'ListView Widget',
-    description: 'Interactive list view with actions',
-    toolMeta: {
-      outputTemplate: 'ui://widget/list-view.html',
-      invoking: 'Loading items...',
-      invoked: 'Items loaded',
-      widgetAccessible: true,
-      resultCanProduceWidget: true,
-    },
-  },
   'intent-display': {
     key: 'intent-display',
     fileName: 'intent-display',
